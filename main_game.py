@@ -15,6 +15,7 @@ VEC = pg.Vector2             # ベクトル計算用ショートカット
 
 # ゲームの状態管理
 class State(Enum):
+
   TITLE = 0
   COUNTDOWN = 1
   PLAY = 2
@@ -611,7 +612,7 @@ def main():
             'WHITE'), (SCREEN_W // 2, SCREEN_H // 2 + 60))
 
     pg.display.flip()
-    clock.tick(50)
+    clock.tick(40)
 
   pg.quit()
 
