@@ -1,53 +1,67 @@
 import pygame as pg
 import random
-import sys as sy
 import math
+from enum import Enum
 
-# --- 設定・定数 ---
-scale_factor = 2
-chip_s = int(24 * scale_factor)  # 1マス約48px
-map_s = pg.Vector2(16, 9)
+# =============================================================================
+# 1. ゲーム設定・定数の定義
+# =============================================================================
+SCALE = 2
+CHIP = int(24 * SCALE)       # 1マスのサイズ (48px)
+MAP_SIZE = pg.Vector2(16, 9)  # マップのマス数 (横16 x 縦9)
+SCREEN_W = int(CHIP * MAP_SIZE.x)
+SCREEN_H = int(CHIP * MAP_SIZE.y)
+VEC = pg.Vector2             # ベクトル計算用ショートカット
 
-# 色定義
-COLOR_BG = (10, 10, 30)
-COLOR_GRID = (30, 30, 60)
-COLOR_REIMU = (255, 50, 50)
-COLOR_MARISA = (255, 255, 0)
-COLOR_LASER_CORE = (255, 255, 255)
-COLOR_LASER_OUT = (255, 255, 100)
+# ゲームの状態管理
+class State(Enum):
+  TITLE = 0
+  COUNTDOWN = 1
+  PLAY = 2
+  OVER = 3
 
-# --- サウンド管理クラス ---
-class SoundManager:
-  def __init__(self):
-    self.sounds = {}
-    self.enabled = True
-    try:
-      pg.mixer.init()
-      # ファイルがある場合はここでロード
-      # self.sounds['shoot'] = pg.mixer.Sound('se_shoot.wav')
-      # self.sounds['laser'] = pg.mixer.Sound('se_laser.wav')
-      # self.sounds['damage'] = pg.mixer.Sound('se_damage.wav')
-    except:
-      self.enabled = False
+# =============================================================================
+# 2. 描画ヘルパー関数
+# =============================================================================
+def draw_neon_text(screen, font, text_str, base_color, center_pos, alpha=255):
+  """ ネオン風テキスト描画 """
+  core_text = font.render(text_str, True, (255, 255, 255))
+  core_text.set_alpha(alpha)
+  core_rect = core_text.get_rect(center=center_pos)
 
-  def play(self, name):
-    if self.enabled and name in self.sounds:
-      self.sounds[name].play()
+  glow_text = font.render(text_str, True, base_color)
+  glow_text.set_alpha(max(0, min(100, alpha - 50)))
 
-  def play_bgm(self):
-    if self.enabled and pg.mixer.music.get_busy() == False:
-      try: pg.mixer.music.play(-1)
-      except: pass
+  offset_amount = 3
+  offsets = [(-offset_amount, 0), (offset_amount, 0),
+             (0, -offset_amount), (0, offset_amount)]
 
-# --- エフェクト・パーティクル ---
+  for dx, dy in offsets:
+    screen.blit(glow_text, core_rect.move(dx, dy))
+  screen.blit(core_text, core_rect)
+
+def draw_star(screen, color, center, size, angle=0):
+  """ 星型を描画する関数 """
+  pts = []
+  for i in range(10):
+    r = size if i % 2 == 0 else size * 0.4
+    rad = math.radians(i * 36 + angle - 90)
+    x = center[0] + r * math.cos(rad)
+    y = center[1] + r * math.sin(rad)
+    pts.append((x, y))
+  pg.draw.polygon(screen, color, pts)
+
+# =============================================================================
+# 3. エフェクト（パーティクル）クラス
+# =============================================================================
 class Particle:
-  def __init__(self, pos, color, vel, life, size):
-    self.pos = pg.Vector2(pos)
-    self.vel = pg.Vector2(vel)
+  def __init__(self, pos, color):
+    self.pos = VEC(pos)
     self.color = color
-    self.life = life
-    self.max_life = life
-    self.size = size
+    self.vel = VEC(random.uniform(-1, 1), random.uniform(-1, 1)
+                   ).normalize() * random.uniform(2, 8)
+    self.life = random.randint(10, 25)
+    self.size = random.uniform(2, 5)
 
   def update(self):
     self.pos += self.vel
@@ -56,518 +70,548 @@ class Particle:
 
   def draw(self, screen):
     if self.life > 0:
-      alpha = int(255 * (self.life / self.max_life))
-      s = pg.Surface(
-          (int(self.size * 2) + 1, int(self.size * 2) + 1), pg.SRCALPHA)
-      pg.draw.circle(s, (*self.color, alpha),
-                     (int(self.size), int(self.size)), int(self.size))
-      screen.blit(s, (int(self.pos.x - self.size),
-                  int(self.pos.y - self.size)))
+      pg.draw.circle(screen, self.color, (int(self.pos.x),
+                                          int(self.pos.y)), int(self.size))
 
-class Laser:
-  def __init__(self, y_idx, duration):
-    self.y = y_idx
-    self.timer = duration
-    self.width = 0
-    self.max_width = chip_s * 1.5
-    self.state = "WARNING"  # WARNING -> FIRE -> FADE
-    self.warning_timer = 60
-
-  def update(self):
-    if self.state == "WARNING":
-      self.warning_timer -= 1
-      if self.warning_timer <= 0:
-        self.state = "FIRE"
-    elif self.state == "FIRE":
-      self.width += (self.max_width - self.width) * 0.2
-      self.timer -= 1
-      if self.timer <= 0:
-        self.state = "FADE"
-    elif self.state == "FADE":
-      self.width *= 0.8
-
-  def draw(self, screen):
-    cy = self.y * chip_s + chip_s // 2
-    if self.state == "WARNING":
-      rect = (0, cy - 2, 16 * chip_s, 4)
-      pg.draw.rect(screen, (255, 0, 0), rect)
-      if (self.warning_timer // 4) % 2 == 0:
-        pg.draw.rect(screen, (255, 255, 0), rect, 1)
-    elif self.width > 1:
-      rect_out = (0, cy - self.width // 2, 16 * chip_s, self.width)
-      rect_in = (0, cy - self.width // 4, 16 * chip_s, self.width // 2)
-      pg.draw.rect(screen, COLOR_LASER_OUT, rect_out)
-      pg.draw.rect(screen, COLOR_LASER_CORE, rect_in)
-
+# =============================================================================
+# 4. 弾クラス (Bullet)
+# =============================================================================
 class Bullet:
-  def __init__(self, pos, target_char, is_enemy=False, pattern="homing"):
-    self.pos = pg.Vector2(pos)
-    self.target = target_char
-    self.vel = pg.Vector2(0, 0)
-    self.speed = 0.45 if not is_enemy else 0.25
-    self.is_active = True
-    self.is_enemy = is_enemy
-    self.pattern = pattern
+  def __init__(self, pos, direction, owner, btype="N", target=None, is_awakened=False):
+    self.pos = VEC(pos)
+    self.direction = direction.normalize() if direction.length_squared() != 0 else VEC(0, 1)
+    self.owner = owner
+    self.type = btype
+    self.target = target
     self.timer = 0
-    self.angle_rot = 0
+    self.active = True
+    self.is_awakened = is_awakened
 
-    if pattern == "star":
-      angle = random.uniform(0, 360)
-      self.vel = pg.Vector2(1, 0).rotate(angle) * self.speed * 0.8
+    # --- 弾の設定 ---
+    speed_mult = 1.2 if is_awakened else 1.0
+
+    if self.type == "Amulet":   # 霊夢SP
+      self.speed = 0.4
+      self.damage = 1
+      self.life_time = 150
+      self.homing_strength = 0.20
+    elif self.type == "Star":   # 魔理沙SP
+      self.speed = 0.5 * speed_mult
+      self.damage = 1
+      self.life_time = 180
+      self.homing_strength = 0.08 if not is_awakened else 0.15
+    else:                       # 通常弾
+      self.speed = (0.7 if owner == "霊夢" else 0.5) * speed_mult
+      self.damage = 1
+      self.life_time = 100
+      self.homing_strength = 0
 
   def update(self):
+    if (self.type in ["Amulet", "Star"]) and self.target and self.target.hp > 0:
+      diff = (self.target.pos - self.pos)
+      if diff.length_squared() > 0:
+        desired = diff.normalize()
+        self.direction = self.direction.lerp(
+            desired, self.homing_strength).normalize()
+
+    self.pos += self.direction * self.speed
     self.timer += 1
-    self.angle_rot += 15  # 回転演出用
 
-    if self.pattern == "homing":
-      target_vec = self.target.pos - self.pos
-      turn = 0.08 if self.is_enemy else 0.2  # 霊夢の誘導性能アップ
-      if target_vec.length() > 0:
-        target_vec = target_vec.normalize() * self.speed
-        self.vel += (target_vec - self.vel) * turn
-        if self.vel.length() > self.speed:
-          self.vel = self.vel.normalize() * self.speed
+    if self.timer > self.life_time:
+      self.active = False
 
-    elif self.pattern == "star":
-      if self.timer < 30: self.vel *= 0.95
-      elif self.timer == 30:
-        if self.target:
-          d = (self.target.pos - self.pos)
-          if d.length() > 0: self.vel = d.normalize() * self.speed * 1.5
-
-    self.pos += self.vel
-    if not (-2 <= self.pos.x < 18 and -2 <= self.pos.y < 11):
-      self.is_active = False
+    margin = 2
+    if not (-margin <= self.pos.x <= MAP_SIZE.x + margin and -margin <= self.pos.y <= MAP_SIZE.y + margin):
+      self.active = False
 
   def draw(self, screen):
-    bx, by = int(self.pos.x * chip_s + 20), int(self.pos.y * chip_s + 20)
+    p = self.pos * CHIP
 
-    if not self.is_enemy:
-      # 霊夢の弾：回転するお札エフェクト
-      size = 12
-      # 座標を中心に回転させる計算
-      pts = [
-          (-size / 2, -size), (size / 2, -size),
-          (size / 2, size), (-size / 2, size)
-      ]
-      rot_pts = []
-      rad = math.radians(self.angle_rot)
-      c = math.cos(rad)
-      s = math.sin(rad)
-      for px, py in pts:
-        rx = px * c - py * s
-        ry = px * s + py * c
-        rot_pts.append((bx + rx, by + ry))
+    if self.type == "Star":
+      color = pg.Color(
+          'ORANGE') if self.is_awakened else pg.Color('YELLOW')
+      draw_star(screen, color, (p.x, p.y), 16, self.timer * 10)
+      draw_star(screen, pg.Color('WHITE'), (p.x, p.y), 8, self.timer * 10)
 
-      pg.draw.polygon(screen, (255, 255, 255), rot_pts)     # 白
-      pg.draw.polygon(screen, (255, 50, 50), rot_pts, 2)    # 赤枠
-      # 内側の模様
-      inner_rect = (bx - 2, by - 4, 4, 8)
-      pg.draw.rect(screen, (255, 0, 0), inner_rect)
+    elif self.type == "Amulet":
+      angle = math.degrees(
+          math.atan2(-self.direction.y, self.direction.x))
+      amulet_surf = pg.Surface((20, 10), pg.SRCALPHA)
+      pg.draw.rect(amulet_surf, pg.Color('RED'), (0, 0, 20, 10))
+      pg.draw.rect(amulet_surf, pg.Color('WHITE'), (4, 2, 12, 6))
+      pg.draw.rect(amulet_surf, pg.Color('PINK'), (5, 3, 10, 8))
+      rotated_surf = pg.transform.rotate(amulet_surf, angle)
+      rect = rotated_surf.get_rect(center=(p.x, p.y))
+      screen.blit(rotated_surf, rect)
 
-    elif self.pattern == "star":
-      points = []
-      rot = self.timer * 10
-      for i in range(5):
-        ang = math.radians(rot + i * 72)
-        points.append((bx + math.cos(ang) * 10,
-                      by + math.sin(ang) * 10))
-        ang2 = math.radians(rot + i * 72 + 36)
-        points.append((bx + math.cos(ang2) * 4,
-                      by + math.sin(ang2) * 4))
-      pg.draw.polygon(screen, (255, 255, 100), points)
-      pg.draw.polygon(screen, (255, 255, 255), points, 1)
     else:
-      w, h = 10, 16
-      rect = (bx - w // 2, by - h // 2, w, h)
-      pg.draw.rect(screen, (255, 150, 150), rect)
-      pg.draw.rect(screen, (255, 255, 255), rect, 2)
+      if self.owner == "霊夢":
+        angle = math.degrees(
+            math.atan2(-self.direction.y, self.direction.x))
+        amulet_surf = pg.Surface((16, 8), pg.SRCALPHA)
+        pg.draw.rect(amulet_surf, pg.Color('RED'), (0, 0, 16, 8))
+        pg.draw.rect(amulet_surf, pg.Color('WHITE'), (2, 2, 12, 4))
+        rotated_surf = pg.transform.rotate(amulet_surf, angle)
+        rect = rotated_surf.get_rect(center=(p.x, p.y))
+        screen.blit(rotated_surf, rect)
+      else:
+        color = pg.Color(
+            'MAGENTA') if self.is_awakened else pg.Color('CYAN')
+        end_pos = p + self.direction * 15
+        pg.draw.line(screen, color, p, end_pos, 4)
 
-class Item:
-  def __init__(self, itype="power"):
-    self.pos = pg.Vector2(random.randint(1, 14), random.randint(1, 7))
-    self.type = itype
-    self.timer = 300
-    self.bob_offset = random.random() * 6.28
+  def get_rect(self):
+    p = self.pos * CHIP
+    size = 20 if self.type == "Star" else 12
+    return pg.Rect(p.x - size / 2, p.y - size / 2, size, size)
+
+# =============================================================================
+# 5. キャラクタークラス
+# =============================================================================
+class Char:
+  def __init__(self, name, pos, img_path, color, hp):
+    self.name = name
+    self.pos = VEC(pos)
+    self.color = color
+    self.max_hp = hp
+    self.hp = hp
+    self.dir = 2
+    self.bullets = []
+    self.cool_time = 0
+    self.move_vec = VEC(0, 0)
+    self.move_anim = VEC(0, 0)
+    self.img = self.load_img(img_path)
+    self.invincible_timer = 0
+    self.is_awakened = False
+
+    # --- 死亡演出用変数の追加 ---
+    self.is_dying = False   # 撃破演出中かどうか
+    self.death_timer = 0    # 演出用のタイマー
+
+  def load_img(self, path):
+    try:
+      raw = pg.image.load(path)
+      chips = []
+      for i in range(4):
+        row = []
+        for j in range(3):
+          rect = (24 * j, 32 * i, 24, 32)
+          img = raw.subsurface(rect)
+          img = pg.transform.scale(
+              img, (int(24 * SCALE), int(32 * SCALE)))
+          row.append(img)
+        chips.append(row)
+      return chips
+    except:
+      return None
+
+  def update(self):
+    # 死亡演出中は更新処理（移動など）を行わない
+    if self.is_dying:
+      return
+
+    if self.cool_time > 0: self.cool_time -= 1
+
+    for b in self.bullets:
+      b.update()
+    self.bullets = [b for b in self.bullets if b.active]
+
+    if self.move_vec.length() > 0:
+      self.move_anim += self.move_vec * 8
+      if self.move_anim.length() >= CHIP:
+        self.pos += self.move_vec
+        self.move_vec = VEC(0, 0)
+        self.move_anim = VEC(0, 0)
+
+  def shoot(self, vec, target=None, btype="N"):
+    if self.is_dying: return  # 死亡時は撃てない
+
+    ct_mult = 0.7 if self.is_awakened else 1.0
+    if self.cool_time > 0: return
+
+    base_ct = 8 if btype == "N" else 45
+    self.cool_time = int(base_ct * ct_mult)
+
+    center_pos = self.pos + VEC(0.5, 0.5)
+
+    if btype == "N":
+      self.bullets.append(
+          Bullet(center_pos, vec, self.name, "N", is_awakened=self.is_awakened))
+    else:
+      if self.name == "霊夢":
+        base_angle = math.degrees(math.atan2(vec.y, vec.x))
+        for i in range(-2, 3):
+          rad = math.radians(base_angle + i * 20)
+          d = VEC(math.cos(rad), math.sin(rad))
+          self.bullets.append(
+              Bullet(center_pos, d, self.name, "Amulet", target, self.is_awakened))
+      else:
+        count = 8 if self.is_awakened else 5
+        base_angle = math.degrees(math.atan2(vec.y, vec.x))
+        for i in range(count):
+          spread = random.uniform(-70, 70)
+          rad = math.radians(base_angle + spread)
+          d = VEC(math.cos(rad), math.sin(rad))
+          b = Bullet(center_pos, d, self.name,
+                     "Star", target, self.is_awakened)
+          b.speed = random.uniform(0.3, 0.8)
+          self.bullets.append(b)
 
   def draw(self, screen, frame):
-    offset_y = math.sin(frame * 0.1 + self.bob_offset) * 5
-    p = (int(self.pos.x * chip_s + 24),
-         int(self.pos.y * chip_s + 24 + offset_y))
-    color = (255, 0, 255) if self.type == "power" else (0, 255, 100)
-    if self.type == "super": color = (255, 215, 0)
-    pg.draw.circle(screen, color, p, 15)
-    pg.draw.circle(screen, (255, 255, 255), p, 15, 2)
-    if frame % 10 == 0:
-      pg.draw.circle(screen, (255, 255, 255), p, 18, 1)
+    # 完全に死亡（リザルト画面での表示など）している場合は描画しない
+    if self.is_dying and self.death_timer <= 0:
+      return
 
-class PlayerCharacter:
-  def __init__(self, name, init_pos, img_path, hp):
-    self.pos = pg.Vector2(init_pos)
-    self.size = pg.Vector2(24, 32) * scale_factor
-    self.dir = 2
-    self.hp = hp
-    self.max_hp = hp
-    self.is_moving = False
-    self.__moving_vec = pg.Vector2(0, 0)
-    self.__moving_acc = pg.Vector2(0, 0)
-    self.invincible_frame = 0
-    self.shot_cooldown = 0
-    self.super_timer = 0
-    self.name = name
-    self.prev_positions = []
+    # 死亡演出中の点滅処理
+    if self.is_dying:
+      # 4フレームごとに描画をスキップ＝高速点滅
+      if (self.death_timer // 2) % 2 == 0:
+        pass  # 描画する
+      else:
+        return  # 描画しない（透明）
 
-    try:
-      img_raw = pg.image.load(img_path).convert_alpha()
-      self.__img_arr = [[pg.transform.scale(img_raw.subsurface(
-          24 * j, 32 * i, 24, 32), self.size) for j in range(3)] for i in range(4)]
-      for i in range(4): self.__img_arr[i].append(self.__img_arr[i][1])
-    except:
-      self.__img_arr = None
+    draw_pos = self.pos * CHIP - VEC(0, 12) * SCALE + self.move_anim
 
-  def move_to(self, vec):
-    if self.is_moving: return
-    self.is_moving = True
-    self.__moving_vec = vec.copy()
-    self.__moving_acc = pg.Vector2(0, 0)
+    if self.is_awakened and not self.is_dying:
+      aura_radius = 30 + math.sin(frame * 0.2) * 5
+      color = (255, 100, 100) if self.name == "魔理沙" else (255, 200, 200)
+      s = pg.Surface((100, 100), pg.SRCALPHA)
+      pg.draw.circle(s, (*color, 100), (50, 50), int(aura_radius))
+      screen.blit(s, (draw_pos.x + 24 - 50, draw_pos.y + 32 - 50))
 
-  def update_move_process(self, speed_val):
-    if not self.is_moving: return
+    if not (self.invincible_timer > 0 and (frame // 2) % 2 == 0):
+      if self.img:
+        screen.blit(self.img[self.dir][frame // 6 % 3], draw_pos)
+      else:
+        pg.draw.rect(screen, self.color,
+                     (draw_pos.x, draw_pos.y, 48, 64))
 
-    if len(self.prev_positions) > 3: self.prev_positions.pop(0)
-    self.prev_positions.append(self.get_dp())
+    for b in self.bullets:
+      b.draw(screen)
 
-    self.__moving_acc += self.__moving_vec * speed_val
-    if self.__moving_acc.length() >= chip_s:
-      self.pos += self.__moving_vec
-      self.pos.x = max(0, min(15, self.pos.x))
-      self.pos.y = max(0, min(8, self.pos.y))
-      self.is_moving = False
-      self.__moving_acc = pg.Vector2(0, 0)
-      self.prev_positions = []
+  def get_hitbox(self):
+    p = self.pos * CHIP + self.move_anim
+    return pg.Rect(p.x + 12, p.y + 12, CHIP - 24, CHIP - 24)
 
-  def get_dp(self):
-    dp = self.pos * chip_s - pg.Vector2(0, 12) * scale_factor
-    if self.is_moving: dp += self.__moving_acc
-    return dp
+# =============================================================================
+# 6. AIクラス (覚醒ロジック強化)
+# =============================================================================
+class AI(Char):
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.wait_timer = 0
 
-  def get_img(self, frame):
-    if self.invincible_frame > 0 and (frame // 2) % 2 == 0: return pg.Surface((0, 0), pg.SRCALPHA)
-    if self.__img_arr is None:
-      surf = pg.Surface(self.size)
-      surf.fill(COLOR_REIMU if self.name == 'reimu' else COLOR_MARISA)
-      pg.draw.rect(surf, (255, 255, 255),
-                   (0, 0, self.size.x, self.size.y), 2)
-      return surf
-    idx = (frame // 4 % 4) if self.is_moving else 1
-    return self.__img_arr[self.dir][idx]
+  def think(self, target_obj):
+    # 死亡中は思考停止
+    if self.is_dying: return
 
+    if self.hp <= self.max_hp * 0.5:
+      self.is_awakened = True
+    else:
+      self.is_awakened = False
+
+    target_pos = target_obj.pos
+    if self.move_vec.length() > 0: return
+
+    self.wait_timer += 1
+
+    think_threshold = 5 if self.is_awakened else 10
+
+    if self.wait_timer < think_threshold: return
+    self.wait_timer = 0
+
+    diff = target_pos - self.pos
+    if diff.length_squared() == 0: return
+
+    is_aligned = (abs(diff.x) < 0.5 or abs(diff.y) < 0.5)
+    move_vecs = [VEC(0, -1), VEC(1, 0), VEC(0, 1), VEC(-1, 0)]
+
+    dist = self.pos.distance_to(target_pos)
+    sp_prob = 0.30 if self.is_awakened else 0.15
+
+    if dist < 8 and random.random() < sp_prob:
+      if abs(diff.x) > abs(diff.y): self.dir = 1 if diff.x > 0 else 3
+      else: self.dir = 2 if diff.y > 0 else 0
+      shoot_dir = move_vecs[self.dir]
+      self.shoot(shoot_dir, target_obj, "S")
+      return
+
+    if is_aligned:
+      normal_prob = 0.85 if self.is_awakened else 0.6
+      if random.random() < normal_prob:
+        self.shoot(diff, target_obj, "N")
+        if diff.y > 0: self.dir = 2
+        elif diff.y < 0: self.dir = 0
+        elif diff.x > 0: self.dir = 1
+        else: self.dir = 3
+        return
+
+    move_idx = -1
+    dodge_prob = 0.7 if self.is_awakened else 0.5
+
+    if is_aligned and random.random() < dodge_prob:
+      if abs(diff.x) < 0.5: move_idx = 2 if self.pos.y < target_pos.y else 0
+      else: move_idx = 1 if self.pos.x < target_pos.x else 3
+    elif random.random() < 0.7:
+      if abs(diff.x) > abs(diff.y): move_idx = 1 if diff.x > 0 else 3
+      else: move_idx = 2 if diff.y > 0 else 0
+    else:
+      move_idx = random.randint(0, 3)
+
+    next_pos = self.pos + move_vecs[move_idx]
+    if 0 <= next_pos.x < MAP_SIZE.x and 0 <= next_pos.y < MAP_SIZE.y:
+      self.dir = move_idx
+      self.move_vec = move_vecs[move_idx]
+
+# =============================================================================
+# 7. メイン処理
+# =============================================================================
 def main():
+  state = State.TITLE
+  menu_cursor = 0
   pg.init()
-  disp_w, disp_h = int(chip_s * map_s.x), int(chip_s * map_s.y)
-  screen = pg.display.set_mode((disp_w, disp_h))
-  pg.display.set_caption("東方討伐伝 - Enhanced Edition")
+  screen = pg.display.set_mode((SCREEN_W, SCREEN_H))
+  world_screen = pg.Surface((SCREEN_W, SCREEN_H))
+
+  pg.display.set_caption("Touhou Grid Battle - Death Animation")
   clock = pg.time.Clock()
 
-  font_title = pg.font.SysFont("msgothic", 60, bold=True)
-  font_sub = pg.font.SysFont("msgothic", 25)
+  start_title = pg.font.SysFont("msgothic", 50)
+  font = pg.font.SysFont("msgothic", 30)
+  small_font = pg.font.SysFont("msgothic", 25)
+  huge_font = pg.font.SysFont("msgothic", 80)
 
-  sound_mgr = SoundManager()
-  sound_mgr.play_bgm()
+  particles = []
+  move_vecs = [VEC(0, -1), VEC(1, 0), VEC(0, 1), VEC(-1, 0)]
 
-  def create_particles(pos, count, color, speed=3.0):
-    parts = []
-    for _ in range(count):
-      angle = random.uniform(0, 6.28)
-      v = pg.Vector2(math.cos(angle), math.sin(angle)) * \
-          random.uniform(1, speed)
-      parts.append(Particle(pos, color, v, 15 + random.randint(0, 10), 3))
-    return parts
+  reimu = Char('霊夢', (2, 4), './data/img/reimu.png', pg.Color('RED'), 20)
+  marisa = AI('魔理沙', (13, 4), './data/img/marisa.png', pg.Color('YELLOW'), 30)
 
-  # --- タイトル画面 ---
-  def show_title():
-    sel = 0
-    particles = []
-    while True:
-      screen.fill(COLOR_BG)
-      if random.random() < 0.1:
-        particles.extend(create_particles(
-            (random.randint(0, disp_w), disp_h), 1, (50, 50, 100), 1))
+  countdown_start_tick = 0
+  countdown_val = 3
+  shake_timer = 0
 
-      for p in particles[:]:
-        p.vel.y = -1
-        p.update()
-        p.draw(screen)
-        if p.life <= 0: particles.remove(p)
-
-      t1 = font_title.render("東方討伐伝", True, (255, 50, 50))
-      screen.blit(t1, (disp_w // 2 - t1.get_width() // 2, 80))
-
-      for i, text in enumerate(["戦闘開始", "終了"]):
-        color = (255, 255, 0) if i == sel else (150, 150, 150)
-        txt = font_sub.render(text, True, color)
-        screen.blit(
-            txt, (disp_w // 2 - txt.get_width() // 2, 260 + i * 60))
-
-      pg.display.update()
-
-      for event in pg.event.get():
-        if event.type == pg.QUIT: pg.quit(); sy.exit()
-        if event.type == pg.KEYDOWN:
-          if event.key in [pg.K_UP, pg.K_w]: sel = 0
-          if event.key in [pg.K_DOWN, pg.K_s]: sel = 1
-          if event.key in [pg.K_SPACE, pg.K_RETURN]:
-            if sel == 0: return
-            else: pg.quit(); sy.exit()
-      clock.tick(60)
-
-  show_title()
-
-  reimu = PlayerCharacter('reimu', (1, 4), './data/img/reimu.png', 10)
-  marisa = PlayerCharacter('marisa', (14, 4), './data/img/marisa.png', 60)
-
-  bullets, items, particles, lasers = [], [], [], []
-  m_vec = [pg.Vector2(0, -1), pg.Vector2(1, 0),
-           pg.Vector2(0, 1), pg.Vector2(-1, 0)]
-
-  frame, finish_frame = 0, 0
-  game_state, is_paused = "PLAY", False
-  screen_shake = 0
-
-  marisa_action_timer = 0
-  marisa_state = "IDLE"
-
-  while True:
-    shake_off = pg.Vector2(0, 0)
-    if screen_shake > 0:
-      shake_off = pg.Vector2(
-          random.randint(-screen_shake, screen_shake), random.randint(-screen_shake, screen_shake))
-      screen_shake = max(0, screen_shake - 1)
+  running = True
+  while running:
+    screen.fill((0, 0, 0))
+    world_screen.fill((30, 30, 40))
 
     for event in pg.event.get():
-      if event.type == pg.QUIT: pg.quit(); sy.exit()
-      if event.type == pg.KEYDOWN:
-        if event.key == pg.K_p: is_paused = not is_paused
-        if game_state == "PLAY" and not is_paused:
-          if not reimu.is_moving:
-            if event.key == pg.K_UP: reimu.dir = 0
-            elif event.key == pg.K_RIGHT: reimu.dir = 1
-            elif event.key == pg.K_DOWN: reimu.dir = 2
-            elif event.key == pg.K_LEFT: reimu.dir = 3
+      if event.type == pg.QUIT:
+        running = False
 
-          if event.key == pg.K_SPACE and reimu.shot_cooldown <= 0:
-            # 霊夢の攻撃強化: 通常で3way、スーパーで5way
-            angles = [-10, 0,
-                      10] if reimu.super_timer <= 0 else [-25, -12, 0, 12, 25]
-            sound_mgr.play('shoot')
-            for a in angles:
-              b = Bullet(reimu.pos, marisa)
-              b.vel = m_vec[reimu.dir].rotate(a) * b.speed
-              bullets.append(b)
-            reimu.shot_cooldown = 10
+      if state == State.TITLE:
+        if event.type == pg.KEYDOWN:
+          if event.key == pg.K_UP: menu_cursor = 0
+          if event.key == pg.K_DOWN: menu_cursor = 1
+          if event.key == pg.K_SPACE:
+            if menu_cursor == 0:
+              reimu.hp = reimu.max_hp
+              reimu.pos = VEC(2, 4)
+              reimu.bullets = []
+              reimu.invincible_timer = 0
+              reimu.is_awakened = False
+              reimu.is_dying = False
 
-        if game_state != "PLAY" and finish_frame > 60 and event.key == pg.K_r:
-          main(); return
+              marisa.hp = marisa.max_hp
+              marisa.pos = VEC(13, 4)
+              marisa.bullets = []
+              marisa.invincible_timer = 0
+              marisa.is_awakened = False
+              marisa.is_dying = False
 
-    if not is_paused and game_state == "PLAY":
-      key = pg.key.get_pressed()
-      if not reimu.is_moving:
-        cmd = -1
-        if key[pg.K_UP]: cmd = 0
-        elif key[pg.K_RIGHT]: cmd = 1
-        elif key[pg.K_DOWN]: cmd = 2
-        elif key[pg.K_LEFT]: cmd = 3
-        if cmd != -1:
-          target = reimu.pos + m_vec[cmd]
-          if 0 <= target.x < 16 and 0 <= target.y < 9:
-            reimu.dir = cmd; reimu.move_to(m_vec[cmd])
-            p_pos = reimu.get_dp() + pg.Vector2(24, 48)
-            particles.extend(create_particles(
-                p_pos, 2, (255, 200, 200), 1))
+              particles = []
+              state = State.COUNTDOWN
+              countdown_val = 3
+              countdown_start_tick = pg.time.get_ticks()
+            else:
+              running = False
 
-      is_awakened = marisa.hp <= 30
-      marisa_action_timer += 1
+      if state == State.OVER:
+        if event.type == pg.KEYDOWN and event.key == pg.K_SPACE:
+          state = State.TITLE
 
-      if marisa_state == "IDLE":
-        wait_time = 30 if is_awakened else 50
-        if marisa_action_timer > wait_time:
-          dice = random.random()
-          if is_awakened and dice < 0.3:
-            marisa_state = "LASER_PREP"
-          elif dice < 0.6:
-            marisa_state = "STAR_FIRE"
-          else:
-            marisa_state = "MOVE"
-          marisa_action_timer = 0
+    # --- 更新と描画 ---
+    shake_offset = (0, 0)
+    if shake_timer > 0:
+      shake_timer -= 1
+      shake_offset = (random.randint(-4, 4), random.randint(-4, 4))
 
-      elif marisa_state == "MOVE":
-        if not marisa.is_moving:
-          m_cmd = random.randint(0, 3)
-          marisa.dir = m_cmd
-          marisa.move_to(m_vec[m_cmd])
-          eb = Bullet(marisa.pos, reimu, is_enemy=True)
-          eb.vel = (reimu.pos - marisa.pos).normalize() * 0.25
-          bullets.append(eb)
-          marisa_state = "IDLE"
+    if state == State.TITLE:
+      draw_neon_text(screen, start_title, "弾幕ゲーム",
+                     pg.Color('red'), (SCREEN_W // 2, 100))
+      opts = ["開始", "終了"]
+      for i, opt in enumerate(opts):
+        color = ('blue') if i == menu_cursor else ('WHITE')
+        txt = font.render(opt, True, color)
+        pos = (SCREEN_W // 2 - txt.get_width() // 2, 250 + i * 60)
+        screen.blit(txt, pos)
+        if i == menu_cursor:
+          pg.draw.polygon(screen, ('WHITE'), [
+                          (pos[0] - 30, pos[1]), (pos[0] - 10, pos[1] + 15), (pos[0] - 30, pos[1] + 30)])
+      info = small_font.render(
+          "矢印キーで移動、SPACEで決定/攻撃、vでスペシャル", True, ('white'))
+      screen.blit(
+          info, (SCREEN_W // 2 - info.get_width() // 2, SCREEN_H - 50))
 
-      elif marisa_state == "STAR_FIRE":
-        if marisa_action_timer % 5 == 0:
-          sound_mgr.play('shoot')
-          for _ in range(3):
-            eb = Bullet(marisa.pos, reimu,
-                        is_enemy=True, pattern="star")
-            bullets.append(eb)
-        if marisa_action_timer > 20:
-          marisa_state = "IDLE"
-          marisa_action_timer = 0
+    elif state == State.COUNTDOWN:
+      frame = pg.time.get_ticks() // 50
+      for y in range(0, SCREEN_H, CHIP): pg.draw.line(
+          world_screen, (50, 50, 60), (0, y), (SCREEN_W, y))
+      for x in range(0, SCREEN_W, CHIP): pg.draw.line(
+          world_screen, (50, 50, 60), (x, 0), (x, SCREEN_H))
+      reimu.draw(world_screen, frame)
+      marisa.draw(world_screen, frame)
 
-      elif marisa_state == "LASER_PREP":
-        if marisa_action_timer == 1:
-          lasers.append(Laser(int(reimu.pos.y), 100))
-          p_pos = marisa.pos * chip_s - \
-              pg.Vector2(0, 12) * scale_factor + pg.Vector2(24, 32)
-          particles.extend(create_particles(
-              p_pos, 20, (255, 255, 100), 5))
-          sound_mgr.play('laser')
-        if marisa_action_timer > 60:
-          marisa_state = "IDLE"
-          marisa_action_timer = 0
+      screen.blit(world_screen, (0, 0))
 
-      if reimu.invincible_frame > 0: reimu.invincible_frame -= 1
-      if reimu.super_timer > 0: reimu.super_timer -= 1
-      if reimu.shot_cooldown > 0: reimu.shot_cooldown -= 1
+      pg.draw.rect(screen, 'RED', (10, 10, reimu.hp * 10, 15))
+      pg.draw.rect(screen, 'WHITE', (10, 10, reimu.hp * 10, 15), 1)
+      enemy_bar_w = marisa.hp * 10
+      pg.draw.rect(screen, 'YELLOW', (SCREEN_W - 10 -
+                   enemy_bar_w, 10, enemy_bar_w, 15))
+      pg.draw.rect(screen, 'WHITE', (SCREEN_W - 10 -
+                   enemy_bar_w, 10, enemy_bar_w, 15), 1)
 
-      for b in bullets[:]:
-        b.update()
-        hit = False
+      elapsed = pg.time.get_ticks() - countdown_start_tick
+      if elapsed < 1000: txt, c = "3", "CYAN"
+      elif elapsed < 2000: txt, c = "2", "YELLOW"
+      elif elapsed < 3000: txt, c = "1", "RED"
+      elif elapsed < 4000: txt, c = "GO!", "WHITE"
+      else: state = State.PLAY
 
-        # 霊夢弾のパーティクル軌跡
-        if not b.is_enemy and frame % 2 == 0:
-          p_pos = b.pos * chip_s + pg.Vector2(20, 20)
-          particles.extend(create_particles(
-              p_pos, 1, (255, 100, 100), 0.5))
+      draw_neon_text(screen, huge_font, txt, pg.Color(c),
+                     (SCREEN_W // 2, SCREEN_H // 2))
 
-        if b.is_enemy:
-          if (b.pos - reimu.pos).length() < 0.5 and reimu.invincible_frame == 0:
-            reimu.hp -= 1; reimu.invincible_frame = 60; hit = True
-            screen_shake = 5
-            sound_mgr.play('damage')
-        else:
-          if (b.pos - marisa.pos).length() < 0.8:
-            marisa.hp -= 1; hit = True
-            particles.extend(create_particles(
-                b.pos * chip_s + pg.Vector2(24, 24), 3, (255, 255, 0)))
+    elif state == State.PLAY:
+      keys = pg.key.get_pressed()
 
-        if hit:
-          b.is_active = False
-        if not b.is_active: bullets.remove(b)
+      # プレイヤー操作（死亡時は操作不可）
+      if not reimu.is_dying:
+        if reimu.move_vec.length() == 0:
+          mv = -1
+          if keys[pg.K_UP]: mv = 0
+          if keys[pg.K_RIGHT]: mv = 1
+          if keys[pg.K_DOWN]: mv = 2
+          if keys[pg.K_LEFT]: mv = 3
+          if mv != -1:
+            reimu.dir = mv
+            next_p = reimu.pos + move_vecs[mv]
+            if (0 <= next_p.x < MAP_SIZE.x and 0 <= next_p.y < MAP_SIZE.y and next_p != marisa.pos):
+              reimu.move_vec = move_vecs[mv]
 
-      for l in lasers[:]:
-        l.update()
-        if l.state == "FIRE" and reimu.invincible_frame == 0:
-          if abs(reimu.pos.y - l.y) < 0.8:
-            reimu.hp -= 1  # ダメージを1に軽減
-            reimu.invincible_frame = 120  # 無敵時間を2秒に延長(即死防止)
-            screen_shake = 15
-            sound_mgr.play('damage')
-        if l.width < 1 and l.state == "FADE": lasers.remove(l)
+        current_dir_vec = move_vecs[reimu.dir]
+        if keys[pg.K_SPACE]: reimu.shoot(current_dir_vec, marisa, "N")
+        if keys[pg.K_v]: reimu.shoot(current_dir_vec, marisa, "S")
 
-      if frame % 280 == 0:
-        items.append(Item(random.choice(["power", "heal", "super"])))
-      for it in items[:]:
-        it.timer -= 1
-        if (reimu.pos - it.pos).length() < 0.6:
-          if it.type == "super": reimu.super_timer = 400
-          elif it.type == "heal": reimu.hp = min(reimu.max_hp, reimu.hp + 3)
-          items.remove(it)
-          particles.extend(create_particles(
-              reimu.get_dp() + pg.Vector2(24, 24), 10, (200, 255, 200)))
-        elif it.timer <= 0: items.remove(it)
+      reimu.update()
+      if reimu.invincible_timer > 0: reimu.invincible_timer -= 1
 
-      for p in particles[:]:
+      # プレイヤーの死亡演出更新
+      if reimu.is_dying:
+        reimu.death_timer -= 1
+        if reimu.death_timer <= 0:
+          state = State.OVER
+
+      # 魔理沙の更新
+      if not marisa.is_dying:
+        marisa.think(reimu)
+        marisa.update()
+        if marisa.invincible_timer > 0: marisa.invincible_timer -= 1
+      else:
+        # 死亡演出中の更新
+        marisa.death_timer -= 1
+        if marisa.death_timer <= 0:
+          state = State.OVER
+
+      # --- ゲーム内世界の描画 ---
+      for y in range(0, SCREEN_H, CHIP): pg.draw.line(
+          world_screen, (50, 50, 60), (0, y), (SCREEN_W, y))
+      for x in range(0, SCREEN_W, CHIP): pg.draw.line(
+          world_screen, (50, 50, 60), (x, 0), (x, SCREEN_H))
+
+      frame = pg.time.get_ticks() // 50
+      reimu.draw(world_screen, frame)
+      marisa.draw(world_screen, frame)
+
+      # 当たり判定 & シェイク発生
+      # 死亡演出中はお互いに当たり判定を処理しない（既に死んでいるので）
+      if not reimu.is_dying and not marisa.is_dying:
+        for attacker, defender in [(reimu, marisa), (marisa, reimu)]:
+          for bullet in attacker.bullets:
+            if bullet.active and bullet.get_rect().colliderect(defender.get_hitbox()):
+              bullet.active = False
+              if defender.invincible_timer <= 0:
+                defender.hp -= bullet.damage
+                defender.invincible_timer = 20
+                shake_timer = 15
+                hit_color = pg.Color('YELLOW')
+                for _ in range(5): particles.append(
+                    Particle(bullet.pos * CHIP, hit_color))
+
+                # HPが0になったら死亡演出開始
+                if defender.hp <= 0:
+                  defender.hp = 0
+                  defender.is_dying = True
+                  defender.death_timer = 80  # 2秒間 (40FPS * 2)
+
+      for p in particles:
         p.update()
-        if p.life <= 0: particles.remove(p)
+        p.draw(world_screen)
+      particles = [p for p in particles if p.life > 0]
 
-      # 移動速度調整 (速すぎたのを抑制)
-      # 60FPS動作なので、1フレームあたりの移動量を 16->8 程度に落とす
-      reimu.update_move_process(12 if reimu.super_timer > 0 else 8)
-      marisa.update_move_process(6 if is_awakened else 4)
+      screen.blit(world_screen, shake_offset)
 
-      if reimu.hp <= 0: game_state = "LOSE"
-      if marisa.hp <= 0: game_state = "WIN"
+      # UI描画
+      pg.draw.rect(screen, 'RED', (10, 10, reimu.hp * 10, 15))
+      pg.draw.rect(screen, 'WHITE', (10, 10, reimu.hp * 10, 15), 1)
+      screen.blit(small_font.render(
+          f"{reimu.name}", True, pg.Color('RED')), (10, 30))
 
-    # --- 描画 ---
-    screen.fill(COLOR_BG)
+      enemy_bar_w = marisa.hp * 10
+      bar_color = 'yellow' if marisa.is_awakened else 'YELLOW'
+      pg.draw.rect(screen, bar_color, (SCREEN_W - 10 -
+                   enemy_bar_w, 10, enemy_bar_w, 15))
+      pg.draw.rect(screen, 'YELLOW', (SCREEN_W - 10 -
+                   enemy_bar_w, 10, enemy_bar_w, 15), 1)
+      m_text = small_font.render(
+          f"{marisa.name}", True, pg.Color(bar_color))
+      m_text_rect = m_text.get_rect(topright=(SCREEN_W - 10, 30))
+      screen.blit(m_text, m_text_rect)
 
-    for x in range(16):
-      pg.draw.line(screen, COLOR_GRID, (x * chip_s + shake_off.x,
-                   shake_off.y), (x * chip_s + shake_off.x, disp_h + shake_off.y))
-    for y in range(9):
-      pg.draw.line(screen, COLOR_GRID, (shake_off.x, y * chip_s +
-                   shake_off.y), (disp_w + shake_off.x, y * chip_s + shake_off.y))
+    elif state == State.OVER:
+      # プレイ画面を薄暗く残す
+      # 死亡しているキャラは消えた状態で描画される
+      frame = pg.time.get_ticks() // 50
+      for y in range(0, SCREEN_H, CHIP): pg.draw.line(
+          world_screen, (50, 50, 60), (0, y), (SCREEN_W, y))
+      for x in range(0, SCREEN_W, CHIP): pg.draw.line(
+          world_screen, (50, 50, 60), (x, 0), (x, SCREEN_H))
+      reimu.draw(world_screen, frame)
+      marisa.draw(world_screen, frame)
+      screen.blit(world_screen, (0, 0))
 
-    for l in lasers: l.draw(screen)
-
-    if marisa.hp <= 30 and game_state == "PLAY":
-      p = marisa.get_dp() + pg.Vector2(24, 32) + shake_off
-      pg.draw.circle(screen, (200, 0, 255), (int(p.x), int(
-          p.y)), 50 + int(math.sin(frame * 0.2) * 10), 3)
-
-    for it in items: it.draw(screen, frame)
-    for b in bullets: b.draw(screen)
-    for p in particles: p.draw(screen)
-
-    for prev_p in reimu.prev_positions:
-      ghost = reimu.get_img(frame).copy()
-      ghost.set_alpha(80)
-      screen.blit(ghost, prev_p + shake_off)
-
-    screen.blit(reimu.get_img(frame), reimu.get_dp() + shake_off)
-    if game_state != "WIN" or (frame // 4) % 2 == 0:
-      screen.blit(marisa.get_img(frame), marisa.get_dp() + shake_off)
-
-    # UI
-    pg.draw.rect(screen, (50, 0, 0), (20, 15, 200, 12))
-    pg.draw.rect(screen, (255, 0, 50),
-                 (20, 15, (reimu.hp / reimu.max_hp) * 200, 12))
-
-    pg.draw.rect(screen, (50, 50, 0), (disp_w - 220, 15, 200, 12))
-    c_m = (255, 0, 255) if marisa.hp <= 30 else (200, 200, 0)
-    pg.draw.rect(screen, c_m, (disp_w - 220, 15,
-                 (marisa.hp / 60) * 200, 12))
-
-    if reimu.super_timer > 0:
-      pg.draw.rect(screen, (255, 255, 0),
-                   (20, 30, (reimu.super_timer / 400) * 200, 4))
-
-    if is_paused:
-      overlay = pg.Surface((disp_w, disp_h), pg.SRCALPHA)
-      overlay.fill((0, 0, 0, 150))
-      screen.blit(overlay, (0, 0))
-      txt = font_sub.render("- PAUSE -", True, (255, 255, 255))
-      screen.blit(txt, (disp_w // 2 - txt.get_width() // 2, disp_h // 2))
-
-    if game_state != "PLAY":
-      finish_frame += 1
-      overlay = pg.Surface((disp_w, disp_h), pg.SRCALPHA)
-      color = (255, 255, 255, max(0, 255 - finish_frame * 4)
-               ) if game_state == "WIN" else (0, 0, 0, min(200, finish_frame * 3))
-      overlay.fill(color)
+      overlay = pg.Surface((SCREEN_W, SCREEN_H))
+      overlay.set_alpha(150)  # 少し暗く
+      overlay.fill((0, 0, 0))
       screen.blit(overlay, (0, 0))
 
-      if finish_frame > 60:
-        msg = "MISSION CLEAR" if game_state == "WIN" else "GAME OVER"
-        col = (255, 200, 0) if game_state == "WIN" else (255, 0, 0)
-        img = font_title.render(msg, True, col)
-        screen.blit(
-            img, (disp_w // 2 - img.get_width() // 2, disp_h // 2 - 40))
-        info = font_sub.render(
-            "Press 'R' to Retry", True, (200, 200, 200))
-        screen.blit(
-            info, (disp_w // 2 - info.get_width() // 2, disp_h // 2 + 40))
+      winner = "霊夢" if marisa.hp <= 0 else "魔理沙"
+      win_color = pg.Color(
+          'RED') if winner == "霊夢" else pg.Color('yellow')
 
-    if not is_paused: frame += 1
-    pg.display.update()
-    clock.tick(60)
+      draw_neon_text(
+          screen, huge_font, f"{winner} WIN!", win_color, (SCREEN_W // 2, SCREEN_H // 2 - 40))
 
-if __name__ == "__main__": main()
+      blink = (pg.time.get_ticks() // 500) % 2 == 0
+      if blink:
+        draw_neon_text(screen, small_font, "スペースキーでタイトルへ戻る", pg.Color(
+            'WHITE'), (SCREEN_W // 2, SCREEN_H // 2 + 60))
+
+    pg.display.flip()
+    clock.tick(40)
+
+  pg.quit()
+
+if __name__ == "__main__":
+  main()
