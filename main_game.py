@@ -438,7 +438,7 @@ def main():
       shake_offset = (random.randint(-4, 4), random.randint(-4, 4))
 
     if state == State.TITLE:
-      draw_neon_text(screen, start_title, "弾幕ゲーム",
+      draw_neon_text(screen, start_title, "東方弾幕バトル",
                      pg.Color('red'), (SCREEN_W // 2, 100))
       opts = ["開始", "終了"]
       for i, opt in enumerate(opts):
