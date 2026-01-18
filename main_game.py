@@ -321,7 +321,9 @@ class AI(Char):
     self.wait_timer = 0
 
     diff = target_pos - self.pos
-    if diff.length_squared() == 0: return
+
+    # 【修正箇所】ここにあった `if diff.length_squared() == 0: return` を削除しました。
+    # これにより、重なっていても攻撃や回避行動が行われるようになります。
 
     is_aligned = (abs(diff.x) < 0.5 or abs(diff.y) < 0.5)
     move_vecs = [VEC(0, -1), VEC(1, 0), VEC(0, 1), VEC(-1, 0)]
@@ -373,7 +375,7 @@ def main():
   screen = pg.display.set_mode((SCREEN_W, SCREEN_H))
   world_screen = pg.Surface((SCREEN_W, SCREEN_H))
 
-  pg.display.set_caption("Touhou Grid Battle - Death Animation")
+  pg.display.set_caption("東方弾幕バトル")
   clock = pg.time.Clock()
 
   start_title = pg.font.SysFont("msgothic", 50)
@@ -384,7 +386,7 @@ def main():
   particles = []
   move_vecs = [VEC(0, -1), VEC(1, 0), VEC(0, 1), VEC(-1, 0)]
 
-  reimu = Char('霊夢', (2, 4), './data/img/reimu.png', pg.Color('RED'), 20)
+  reimu = Char('霊夢', (2, 4), './data/img/reimu.png', pg.Color('RED'), 25)
   marisa = AI('魔理沙', (13, 4), './data/img/marisa.png', pg.Color('YELLOW'), 30)
 
   countdown_start_tick = 0
@@ -450,7 +452,7 @@ def main():
           pg.draw.polygon(screen, ('WHITE'), [
                           (pos[0] - 30, pos[1]), (pos[0] - 10, pos[1] + 15), (pos[0] - 30, pos[1] + 30)])
       info = small_font.render(
-          "矢印キーで移動、SPACEで決定/攻撃、vでスペシャル", True, ('white'))
+          "矢印キーで移動、SPACEで決定/攻撃、vでスペシャル攻撃", True, ('white'))
       screen.blit(
           info, (SCREEN_W // 2 - info.get_width() // 2, SCREEN_H - 50))
 
@@ -469,9 +471,9 @@ def main():
       pg.draw.rect(screen, 'WHITE', (10, 10, reimu.hp * 10, 15), 1)
       enemy_bar_w = marisa.hp * 10
       pg.draw.rect(screen, 'YELLOW', (SCREEN_W - 10 -
-                   enemy_bar_w, 10, enemy_bar_w, 15))
+                                      enemy_bar_w, 10, enemy_bar_w, 15))
       pg.draw.rect(screen, 'WHITE', (SCREEN_W - 10 -
-                   enemy_bar_w, 10, enemy_bar_w, 15), 1)
+                                     enemy_bar_w, 10, enemy_bar_w, 15), 1)
 
       elapsed = pg.time.get_ticks() - countdown_start_tick
       if elapsed < 1000: txt, c = "3", "CYAN"
@@ -571,9 +573,9 @@ def main():
       enemy_bar_w = marisa.hp * 10
       bar_color = 'yellow' if marisa.is_awakened else 'YELLOW'
       pg.draw.rect(screen, bar_color, (SCREEN_W - 10 -
-                   enemy_bar_w, 10, enemy_bar_w, 15))
+                                       enemy_bar_w, 10, enemy_bar_w, 15))
       pg.draw.rect(screen, 'YELLOW', (SCREEN_W - 10 -
-                   enemy_bar_w, 10, enemy_bar_w, 15), 1)
+                                      enemy_bar_w, 10, enemy_bar_w, 15), 1)
       m_text = small_font.render(
           f"{marisa.name}", True, pg.Color(bar_color))
       m_text_rect = m_text.get_rect(topright=(SCREEN_W - 10, 30))
@@ -609,7 +611,7 @@ def main():
             'WHITE'), (SCREEN_W // 2, SCREEN_H // 2 + 60))
 
     pg.display.flip()
-    clock.tick(40)
+    clock.tick(50)
 
   pg.quit()
 
