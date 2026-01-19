@@ -387,7 +387,7 @@ def main():
   particles = []
   move_vecs = [VEC(0, -1), VEC(1, 0), VEC(0, 1), VEC(-1, 0)]
 
-  reimu = Char('霊夢', (2, 4), './data/img/reimu.png', pg.Color('RED'), 25)
+  reimu = Char('霊夢', (2, 4), './data/img/reimu.png', pg.Color('RED'), 20)
   marisa = AI('魔理沙', (13, 4), './data/img/marisa.png', pg.Color('YELLOW'), 30)
 
   countdown_start_tick = 0
