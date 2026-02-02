@@ -9,8 +9,6 @@ env/
 
 # --- ビルド・配布用 (PyInstallerなどでexe化する時に生成される) ---
 build/
-dist/
-*.spec
 
 # --- OSの一時ファイル ---
 .DS_Store
